@@ -18,10 +18,10 @@ def startstudy(learntime,x):
     url = 'https://welearn.sflep.com/Ajax/SCO.aspx'
     req1 = session.post(url,data={'action':'getscoinfo_v7','uid':uid,'cid':cid,'scoid':scoid},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
     if('学习数据不正确' in req1.text):
+        req1 = session.post(url,data={'action':'startsco160928','uid':uid,'cid':cid,'scoid':scoid},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
         req1 = session.post(url,data={'action':'getscoinfo_v7','uid':uid,'cid':cid,'scoid':scoid},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
         if('学习数据不正确' in req1.text):
-            wrong.append(x['location'])
-            print('\r错误:',x['location'],' ' * 10)
+            print('\n错误:',x['location'])
             return 0
     back = json.loads(req1.text)['comment']
     if('cmi' in back):
