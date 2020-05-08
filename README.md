@@ -1,5 +1,5 @@
 # WELearnToSleeep
-WeLearn一键增加学习时长
+WeLearn刷学习时长
 ## 简介
 * 输入账号密码一键学习
 * 可以自行选择课程
