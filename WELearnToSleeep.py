@@ -1,166 +1,347 @@
-import requests
+import asyncio
 import json
-import time
 import random
-import threading
-class NewThread(threading.Thread):
-    def __init__(self,learntime,x):
-        threading.Thread.__init__(self)
-        self.deamon = True
-        self.learntime = learntime
-        self.x = x
-    def run(self):
-        startstudy(self.learntime,self.x)
-def startstudy(learntime,x):
-#    print('\n位置: '+x['location']+'\n已学习: '+x['learntime']+'
-#    即将学习'+str(learntime)+'秒～',end='')
-    scoid = x['id']
-    url = 'https://welearn.sflep.com/Ajax/SCO.aspx'
-    req1 = session.post(url,data={'action':'getscoinfo_v7','uid':uid,'cid':cid,'scoid':scoid},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
-    if('学习数据不正确' in req1.text):
-        req1 = session.post(url,data={'action':'startsco160928','uid':uid,'cid':cid,'scoid':scoid},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
-        req1 = session.post(url,data={'action':'getscoinfo_v7','uid':uid,'cid':cid,'scoid':scoid},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
-        if('学习数据不正确' in req1.text):
-            print('\n错误:',x['location'])
-            wrong.append(x['location'])
-            return 0
-    back = json.loads(req1.text)['comment']
-    if('cmi' in back):
-        back = json.loads(back)['cmi']
-        cstatus = back['completion_status']
-        progress = back['progress_measure']
-        session_time = back['session_time']
-        total_time = back['total_time']
-        crate = back['score']['scaled']
+import re
+import time
+from textwrap import dedent
+from typing import Any, Dict, List, Union
+
+import requests
+
+
+def login():
+    '''登录，cookie由session处理
+
+    如果登录失败直接退出
+    '''
+    print(dedent('''\
+        **********  Created By Avenshy & SSmJaE  **********
+                        Version : 0.3.0
+           基于GPL3.0，完全开源，免费，禁止二次倒卖或商用
+           https://www.github.com/Avenshy/WELearnToSleeep
+                        仅供学习，勿滥用
+        ***************************************************
+    '''))
+
+    username = input('Username: ')
+    password = input('Password: ')
+
+    print('Login...', end=' ')
+    response = session.get(
+        'https://sso.sflep.com/cas/login?service=http%3a%2f%2fwelearn.sflep.com%2f2019%2fuser%2floginredirect.aspx')
+    lt = re.search('name="lt" value="(.*?)"', response.text).group(1)
+
+    response = session.post(
+        'https://sso.sflep.com/cas/login?service=http%3a%2f%2fwelearn.sflep.com%2f2019%2fuser%2floginredirect.aspx',
+        data={
+            'username': username,
+            'password': password,
+            'lt': lt,
+            '_eventId': 'submit',
+            'submit': 'LOGIN'
+        }
+    )
+
+    if '请登录' in response.text:
+        input('Fail!!')
+        exit(0)
     else:
-        cstatus = 'not_attempted'
-        progress = session_time = total_time = '0'
+        print('Success!!\n\n')
+
+
+def get_target_course_info():
+    global cid, uid, classid, courseInfo
+
+    # get course list
+    response = session.get(
+        'https://welearn.sflep.com/ajax/authCourse.aspx?action=gmc',
+        headers={
+            'Referer': 'https://welearn.sflep.com/2019/student/index.aspx'
+        }
+    )
+    courseList = response.json()['clist']
+    for index, course in enumerate(courseList, start=1):
+        print('[id:{:>2d}]  完成度 {:>3d}%  {}'.format(index, course['per'], course['name']))
+
+    #  get cid(course id) and uid(user id) and class id
+    index = int(input('\n请输入需要刷时长的课程id（id为上方[]内的序号）: '))
+    cid = str(courseList[index - 1]['cid'])
+    response = session.get(
+        'https://welearn.sflep.com/2019/student/course_info.aspx?cid=' + cid,
+        headers={
+            'Referer': 'https://welearn.sflep.com/2019/student/index.aspx'
+        }
+    )
+    uid = re.search('"uid":(.*?),', response.text).group(1)
+    classid = re.search('"classid":"(.*?)"', response.text).group(1)
+
+    # get target course's units
+    req = session.get(
+        'https://welearn.sflep.com/ajax/StudyStat.aspx',
+        params={
+            'action': 'courseunits',
+            'cid': cid,
+            'uid': uid
+        },
+        headers={
+            'Referer': 'https://welearn.sflep.com/2019/student/course_info.aspx'
+        }
+    )
+    courseInfo = req.json()['info']
+
+
+def choose_unit():
+    global unitIndex
+
+    print("\n\n")
+    print('[id: 0]  按顺序刷全部单元学习时长')
+    for index, unit in enumerate(courseInfo, start=1):
+        print(f"""[id:{index:>2d}]  {unit['unitname']}  {unit['name']}""")
+
+    print("\n\n")
+    unitIndex = int(input('请选择要刷时长的单元id（id为上方[]内的序号，输入0为刷全部单元）： '))
+
+
+def input_time():
+    global targetTime
+
+    print("\n\n")
+    print(dedent('''\
+        模式1:每个练习增加指定学习时长，请直接输入时间
+        如:希望每个练习增加30秒，则输入 30
+
+        模式2:每个练习增加随机时长，请输入时间上下限并用英文逗号隔开
+        如:希望每个练习增加10～30秒，则输入 10,30
+    '''))
+    print("\n\n")
+
+    input_ = input("请严格按照以上格式输入: ")
+    if(',' in input_):
+        try:
+            targetTime = [int(temp) for temp in input_.split(',')]
+        except:
+            print("格式异常")
+            exit(0)
+    else:
+        targetTime = int(input_)
+
+
+def generate_learning_time():
+    """每一次模拟都重新生成一次随机学习时间"""
+    global targetTime
+
+    if type(targetTime) is int:
+        learntime = targetTime
+    else:
+        learntime = random.randint(targetTime[0], targetTime[1])
+    return learntime
+
+
+def output_results():
+    print('运行结束!!\n错误:', len(errors), '个')
+    for index, error in enumerate(errors, start=1):
+        print(f"第{index}个错误:{ error}")
+
+    print("\n\n")
+    print(dedent('''\
+        **********  Created By Avenshy & SSmJaE  **********
+                        Version : 0.3.0
+           基于GPL3.0，完全开源，免费，禁止二次倒卖或商用
+           https://www.github.com/Avenshy/WELearnToSleeep
+                        仅供学习，勿滥用
+        ***************************************************
+    '''))
+    print("\n\n")
+    input("Press any key to exit...")
+
+
+async def simulate(learningTime: int, chapter: Dict):
+    print(f"""章节 : {chapter['location']}""")
+    print(f"""已学 : {chapter['learntime']} 将学 : {learningTime}""")
+
+    commonHeaders = {
+        'Referer': 'https://welearn.sflep.com/student/StudyCourse.aspx'
+    }
+
+    scoid = chapter['id']
+    commonData = {
+        'uid': uid,
+        'cid': cid,
+        'scoid': scoid
+    }
+
+    await asyncio.sleep(REQUEST_INTERVAL)
+    response = session.post(
+        AJAX_URL,
+        data={
+            **commonData,
+            'action': 'getscoinfo_v7',
+        },
+        headers=commonHeaders
+    )
+
+    if('学习数据不正确' in response.text):  # 重试
+        await asyncio.sleep(REQUEST_INTERVAL)
+
+        response = session.post(
+            AJAX_URL,
+            data={
+                **commonData,
+                'action': 'startsco160928',
+            },
+            headers=commonHeaders
+        )
+        response = session.post(
+            AJAX_URL,
+            data={
+                **commonData,
+                'action': 'getscoinfo_v7',
+            },
+            headers=commonHeaders
+        )
+
+        if('学习数据不正确' in response.text):
+            print('\n错误:', chapter['location'])
+            errors.append(chapter['location'])
+            return
+
+    returnJson = response.json()['comment']
+    if('cmi' in returnJson):
+        cmi = json.loads(returnJson)['cmi']
+
+        crate = cmi['score']['scaled']
+        cstatus = cmi['completion_status']
+        progress = cmi['progress_measure']
+        total_time = cmi['total_time']
+        session_time = cmi['session_time']
+    else:
         crate = ''
-    url = 'https://welearn.sflep.com/Ajax/SCO.aspx'
-    req1 = session.post(url,data={'action':'keepsco_with_getticket_with_updatecmitime','uid':uid,'cid':cid,'scoid':scoid,'session_time':session_time,'total_time':total_time},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
-    for nowtime in range(1,learntime + 1):
-#        print(str(nowtime)+'～',end='')
-        time.sleep(1)
-        if(nowtime % 60 == 0):
-#            print('发送心跳包～',end='')
-            url = 'https://welearn.sflep.com/Ajax/SCO.aspx'
-            req1 = session.post(url,data={'action':'keepsco_with_getticket_with_updatecmitime','uid':uid,'cid':cid,'scoid':scoid,'session_time':session_time,'total_time':total_time},headers={'Referer':'https://welearn.sflep.com/student/StudyCourse.aspx' })
-#    print('增加学习时间～')
-    url = 'https://welearn.sflep.com/Ajax/SCO.aspx'
-    req1 = session.post(url,data={'action':'savescoinfo160928','cid':cid,'scoid':scoid,'uid':uid,'progress':progress,'crate':crate,'status':'unknown','cstatus':cstatus,'trycount':'0'},headers={'Referer':'https://welearn.sflep.com/Student/StudyCourse.aspx'})
+        cstatus = 'not_attempted'
+        progress = '0'
+        total_time = '0'
+        session_time = '0'
+
+    await asyncio.sleep(REQUEST_INTERVAL)
+    session.post(
+        AJAX_URL,
+        data={
+            **commonData,
+            'action': 'keepsco_with_getticket_with_updatecmitime',
+            'session_time': session_time,
+            'total_time': total_time
+        },
+        headers=commonHeaders
+    )
+
+    for currentTime in range(1, learningTime + 1):
+        await asyncio.sleep(1)
+
+        if(currentTime % 60 == 0):
+            session.post(
+                AJAX_URL,
+                data={
+                    **commonData,
+                    'action': 'keepsco_with_getticket_with_updatecmitime',
+                    'session_time': session_time,
+                    'total_time': total_time},
+                headers=commonHeaders
+            )
+
+    await asyncio.sleep(REQUEST_INTERVAL)
+    session.post(
+        AJAX_URL,
+        data={
+            **commonData,
+            'action': 'savescoinfo160928',
+            'crate': crate,
+            'cstatus': cstatus,
+            'status': 'unknown',
+            'progress': progress,
+            'trycount': '0'
+        },
+        headers=commonHeaders
+    )
 
 
-print('**********  Created By Avenshy  **********\nVersion:0.2dev\n')
-session = requests.Session()
-username = input('Username: ')
-password = input('Password: ')
-
-print('Login...',end=' ')
-url = 'https://sso.sflep.com/cas/login?service=http%3a%2f%2fwelearn.sflep.com%2f2019%2fuser%2floginredirect.aspx'
-req = session.get(url)
-lt = req.text[req.text.find('name="lt" value="') + 17:req.text.find('name="lt" value="') + 17 + 76]
-url = 'https://sso.sflep.com/cas/login?service=http%3a%2f%2fwelearn.sflep.com%2f2019%2fuser%2floginredirect.aspx'
-req = session.post(url,data={'username':username,'password':password,'lt':lt,'_eventId':'submit','submit':'LOGIN'})
-if('请登录' in req.text):
-    input('Fail!!\n')
-    exit(0)
-print('Success!!\n\n')
-while True:
-    url = 'https://welearn.sflep.com/ajax/authCourse.aspx?action=gmc'
-    req = session.get(url,headers={'Referer':'https://welearn.sflep.com/2019/student/index.aspx'})
-    back = json.loads(req.text)['clist']
-    i = 1
-    for x in back:
-        print('[id:{:>2d}]  完成度 {:>2d}%  {}'.format(i,x['per'],x['name']))
-        i+=1
-    i = int(input('\n请输入需要刷时长的课程id（id为上方[]内的序号）: '))
-
-    cid = str(back[i - 1]['cid'])
-    url = 'https://welearn.sflep.com/2019/student/course_info.aspx?cid=' + cid
-    req = session.get(url,headers={'Referer':'https://welearn.sflep.com/2019/student/index.aspx'})
-    uid = req.text[req.text.find('"uid":') + 6:req.text.find('"',req.text.find('"uid":') + 7) - 2]
-    classid = req.text[req.text.find('classid=') + 8:req.text.find('&',req.text.find('classid=') + 9)]
+async def heartbeat():
+    startTime = time.time()
+    for _ in range(maxLearningTime+4*REQUEST_INTERVAL):
+        print(
+            f"""\r预计学习时长 : {maxLearningTime+4*REQUEST_INTERVAL} 已学习时长 : {int(time.time()-startTime)}""", end="")
+        await asyncio.sleep(HEARTBEAT_INTERVAL)
 
 
-    url = 'https://welearn.sflep.com/ajax/StudyStat.aspx'
-    req = session.get(url,params={'action':'courseunits','cid':cid,'uid':uid},headers={'Referer':'https://welearn.sflep.com/2019/student/course_info.aspx'})
-    back = json.loads(req.text)['info']
+async def watcher():
+    global maxLearningTime
 
-    print('\n\n[id: 0]  按顺序刷全部单元学习时长')
-    i = 0
-    unitsnum = len(back)
-    for x in back:
-        i+=1
-        print('[id:{:>2d}]  {}  {}'.format(i,x['unitname'],x['name']))
-    unitidx = int(input('\n\n请选择要刷时长的单元id（id为上方[]内的序号，输入0为刷全部单元）： '))
+    while True:
+        get_target_course_info()
+        choose_unit()
+        input_time()
+
+        if(unitIndex == 0):
+            startIndex = 0
+            endIndex = len(courseInfo)
+        else:
+            startIndex = unitIndex-1
+            endIndex = unitIndex
+
+        tasks = []
+        for unit in range(startIndex, endIndex):
+            response = session.get(
+                f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={cid}&uid={uid}&unitidx={str(unit)}&classid={classid}",
+                headers={
+                    'Referer': 'https://welearn.sflep.com/2019/student/course_info.aspx?cid=' + cid
+                }
+            )
+
+            for chapter in response.json()['info']:
+                learningTime = generate_learning_time()
+
+                if learningTime > maxLearningTime:
+                    maxLearningTime = learningTime
+
+                tasks.append(asyncio.create_task(simulate(learningTime, chapter)))
+
+        await heartbeat()
+        [await task for task in tasks]
+
+        if (unitIndex == 0):  # 如果已经刷完所有单元
+            break
+        else:  # 如果只刷了指定单元
+            print("\n\n")
+            print(f'本单元结束！错误 : {len(errors)}个')
+
+            for index, error in enumerate(errors, start=1):
+                print(f"第{index}个错误章节 : {error}")
+
+            print('回到选课处！！')
+            print("\n\n")
+            maxLearningTime = 0
 
 
-    inputdata = input('\n\n\n模式1:每个练习增加指定学习时长，请直接输入时间\n如:希望每个练习增加30秒，则输入 30\n\n模式2:每个练习增加随机时长，请输入时间上下限并用英文逗号隔开\n如:希望每个练习增加10～30秒，则输入 10,30\n\n\n请严格按照以上格式输入: ')
-    if(',' in inputdata):
-        inputtime = eval(inputdata)
-        mode = 2
-    else:
-        inputtime = int(inputdata)
-        mode = 1
+async def main():
+    await asyncio.gather(
+        watcher()
+    )
 
 
-    threads = 100 #最大线程数设置
-    running = []
-    runningnumber = maxtime = 0
-    wrong = []
+if __name__ == "__main__":
+    REQUEST_INTERVAL = 2
+    HEARTBEAT_INTERVAL = 1
+    AJAX_URL = "https://welearn.sflep.com/Ajax/SCO.aspx"
 
-    if(unitidx == 0):
-        i = 0
-    else:
-        i = unitidx - 1
-        unitsnum = unitidx
+    cid: str
+    uid: str
+    classid: str
+    courseInfo: List[Any]
+    unitIndex: int
+    targetTime: Union['int', List['int']]
 
-#    while '异常' not in req.text and '出错了' not in req.text:
-    for unit in range(i,unitsnum):
-        url = 'https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid=' + cid + '&uid=' + uid + '&unitidx=' + str(unit) + '&classid=' + classid
-        req = session.get(url,headers={'Referer':'https://welearn.sflep.com/2019/student/course_info.aspx?cid=' + cid})
-        back = json.loads(req.text)['info']
-        for x in back:
-            if(mode == 1):
-                learntime = inputtime
-            else:
-                learntime = random.randint(inputtime[0],inputtime[1])
-            if(runningnumber == threads):
-                for nowtime in range(1,maxtime + 1):
-                    print('\r已启动线程:',runningnumber,'当前秒数:',nowtime,'秒，总时间:',maxtime,'秒',end='')
-                    time.sleep(1)
-                print('  等待线程退出…')
-                for t in running:
-                    t.join()
-                runningnumber = maxtime = 0
-                running = []
-            running.append(NewThread(learntime,x))
-            running[runningnumber].start()
-            runningnumber+=1
-            if(learntime > maxtime):
-                maxtime = learntime
-            print('线程:',runningnumber,'位置:',x['location'],'\n已学: ',x['learntime'],'将学:',learntime,'秒')
+    errors: List[str] = []
+    maxLearningTime: int = 0
+    session = requests.Session()
 
-        if(runningnumber > 0):
-            for nowtime in range(1,maxtime + 1):
-                print('\r已启动线程:',runningnumber,'当前秒数:',nowtime,'秒，总时间:',maxtime,'秒',end='')
-                time.sleep(1)
-            print('  等待线程退出…')
-            for t in range(runningnumber):
-                running[t].join()
-            runningnumber = maxtime = 0
-            running = []
-
-    if (unitidx == 0):
-        break
-    else:
-        print('\n\n本单元结束！错误:',len(wrong),'个')
-        for i in range(len(wrong)):
-            print('第',i + 1,'个错误:',wrong[i])
-        print('回到选课处！！\n\n\n\n')
-
-print('运行结束!!\n错误:',len(wrong),'个')
-for i in range(len(wrong)):
-    print('第',i + 1,'个错误:',wrong[i])
-print("\n\n\n**********  Created By Avenshy  **********\n\n\n")
-input("Press any key to exit...")
+    login()
+    asyncio.run(main())
+    output_results()
