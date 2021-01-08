@@ -8,9 +8,9 @@ WeLearn刷学习时长
 
 **PS:本软件只增加学习时长，如需完成课程请食用[WELearnToSleep(WeLearn一键完成课程)](https://github.com/Avenshy/WELearnToSleep)**
 
-![image](https://raw.githubusercontent.com/Avenshy/WELearnToSleeep/master/preview1.png)
-![image](https://raw.githubusercontent.com/Avenshy/WELearnToSleeep/master/preview2.png)
-![image](https://raw.githubusercontent.com/Avenshy/WELearnToSleeep/master/preview3.png)
+![image](./docs/pictures/preview1.png)
+![image](./docs/pictures/preview2.png)
+![image](./docs/pictures/preview3.png)
 
 
 ## 更新日志
